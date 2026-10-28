@@ -27,16 +27,24 @@ Login Admin → tombol **⚙️ Admin**:
 3. **Rotasi penuh** (bagian bawah tab itu): dipakai bila password lama sudah bocor. Membuat kunci data baru, mengenkripsi ulang bank soal,
    dan memaksa semua password diganti. Perubahan password biasa **tidak** mencabut akses orang yang sudah menyimpan file `keys.js` lama.
 
+## C2. Jika HP tetap menyebut perangkat belum disetujui
+- Gunakan URL GitHub Pages yang sama dan browser yang sama saat membuat permintaan perangkat. ID persetujuan tersimpan pada browser/perangkat; berpindah dari Chrome ke browser dalam aplikasi WhatsApp, mode privat, atau menghapus data situs dapat membuat ID baru.
+- Setelah admin menyetujui, pastikan proses “Terbitkan akun & password” berhasil menyimpan `data/keys.js` ke repo dan branch yang benar.
+- Versi perbaikan ini membaca `data/keys.js` langsung dari GitHub sebagai sumber persetujuan terbaru, tidak lagi menolak file GitHub hanya karena timestamp file yang tertanam di GitHub Pages lebih baru.
+- Jika GitHub tidak dapat dihubungi, halaman menampilkan pesan sinkronisasi gagal, bukan keliru menyatakan perangkat belum disetujui.
+- Jika ID browser berubah, buka Hubungi admin di HP tersebut, salin kode permintaan `CSREQ1` yang baru, lalu minta admin menyetujui perangkat itu lagi.
+
 ## C1. Panel Admin, sinkron langsung, & kode pengguna baru
 - Tombol **⚙️ Admin** meminta **password admin** lagi sebelum panel terbuka (tetap terbuka 5 menit setelah benar; 5 salah berturut-turut = jeda 30 detik).
 - **Sinkron langsung (tanpa deploy):** isi *token GitHub* sekali di tab "Terbitkan ke GitHub". Setelah itu setiap buat/hapus kode, ganti password, tambah/hapus akun otomatis disimpan ke GitHub.
   Halaman login membaca data akun terbaru langsung dari GitHub (bukan dari cache situs), jadi akun/kode baru bisa dipakai dalam hitungan detik tanpa menunggu GitHub Pages.
 - **Nonaktif otomatis:** perangkat yang sedang login memeriksa data terbaru tiap ±1 menit dan saat kembali ke tab. Akun/kode yang dihapus atau password yang diganti → pengguna otomatis keluar.
-- **Login pengguna (non-admin) pakai Google Authenticator:** Panel Admin → tab "Pengguna Authenticator" → isi nama → *Buat pengguna & kode aktivasi*.
-  Admin memberi **kode aktivasi** (10 karakter) ke pengguna. Pengguna: (1) buka halaman login, ketik kode aktivasi di kolom *Kode*; (2) pindai QR dengan Google Authenticator; (3) ketik kode 6 angka → masuk.
-  Seterusnya di perangkat itu **cukup kode 6 angka** (username boleh dikosongkan). HP baru / ganti HP: buat ulang pengguna dengan nama yang sama → kode aktivasi baru.
-  Hapus pengguna di tab itu → langsung nonaktif di semua perangkat (±1 menit). Perlu token GitHub agar perubahan langsung terbit (lihat C1b).
-  Rahasia Authenticator tidak pernah tersimpan polos di `keys.js`: dibungkus kode aktivasi, dan kunci data dibungkus rahasia itu. Password akun tim lama tetap bisa dipakai di kolom yang sama.
+- **Login tim (non-admin) = kode Authenticator admin:** pengguna (mis. Ari) tidak punya password. Alurnya:
+  1. Ari buka halaman login → *Hubungi admin lewat email* (atau ketik kode 6 angka) → muncul **kode permintaan** (`CSREQ1.…`, tidak berisi rahasia). Ari kirim ke admin lewat email/chat.
+  2. Admin: Panel Admin → tab **Perangkat** → tempel kode permintaan → **Setujui perangkat**. (Admin harus sudah menghubungkan Authenticator di tab Authenticator; perlu token GitHub agar langsung berlaku.)
+  3. Setiap login, Ari mengetik **kode 6 angka dari Authenticator admin** (admin membacakan kode saat itu). Sesi maksimal 2 jam, lalu minta kode lagi.
+  4. Tab **Perangkat** menampilkan semua HP/PC yang terhubung (jenis perangkat, nama, kapan disetujui). Klik **Putuskan** (atau **Putuskan semua**) → pengguna keluar dalam ±1 menit dan harus minta persetujuan lagi.
+  Keamanan: tiap perangkat membuat pasangan kunci sendiri; admin menyegel kunci data untuk kunci *publik* perangkat itu, jadi hanya perangkat itu yang bisa membukanya. Rahasia Authenticator tidak pernah tersimpan polos di `keys.js`. Jika admin mengganti/mematikan Authenticator, perangkat yang ia setujui otomatis disegel ulang/diputus. Login admin tetap email + password + Authenticator.
 - **Auto-tempel:** tombol "Tempel & Cari" + opsi Auto-tempel (saat kotak soal kosong diketuk / saat kembali ke halaman). Butuh HTTPS (GitHub Pages sudah) dan izin "tempel" browser.
 
 ## C1b. Token GitHub bermasalah ("Resource not accessible by personal access token")
