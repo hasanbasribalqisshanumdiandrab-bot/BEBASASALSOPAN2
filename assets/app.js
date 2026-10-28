@@ -497,7 +497,7 @@
   function sessionValid(k) {
     if (!SESS || !k) return true;
     if (SESS.role === 'admin') return k.admins.some((x) => x.h === SESS.h);
-    if (SESS.uid) { const u = (k.users || []).find((x) => x.id === SESS.uid); return !!u && (!SESS.wrap || u.wrap === SESS.wrap); }
+    if (SESS.devId) return (k.devices || []).some((x) => x.id === SESS.devId);
     if (SESS.accId) { const a = k.accounts.find((x) => x.id === SESS.accId); return !!a && (!SESS.wrap || a.wrap === SESS.wrap); }
     return true;
   }
@@ -542,42 +542,86 @@
     $('timer').classList.toggle('low', left < 300);
   }
   const normInvite = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const localSec = (id) => { const v = ls.get('cs_tp_' + id); try { return v ? b32dec(v) : null; } catch (e) { return null; } };
-  /** Login non-admin: (1) kode 6 angka Authenticator di perangkat yang sudah diaktifkan, (2) password akun lama,
-      (3) kode aktivasi 10 karakter dari admin → hubungkan Google Authenticator (sekali per perangkat). */
+  /* ----- Perangkat tim: disetujui admin sekali; setiap login = kode 6 angka dari Authenticator admin ----- */
+  function devInfo() {
+    const ua = navigator.userAgent || ''; let os = 'Perangkat', br = 'Browser';
+    if (/iPhone/.test(ua)) os = 'HP iPhone'; else if (/iPad/.test(ua)) os = 'Tablet iPad';
+    else if (/Android/.test(ua)) { const m = ua.match(/Android[^;]*;\s*([^;)]+)/); os = 'HP Android' + (m && !/^wv$/i.test(m[1].trim()) ? ' (' + m[1].trim() + ')' : ''); }
+    else if (/Windows/.test(ua)) os = 'PC Windows'; else if (/Mac OS X/.test(ua)) os = 'Mac'; else if (/Linux/.test(ua)) os = 'PC Linux';
+    if (/Edg\//.test(ua)) br = 'Edge'; else if (/OPR\//.test(ua)) br = 'Opera'; else if (/CriOS|Chrome\//.test(ua)) br = 'Chrome'; else if (/FxiOS|Firefox\//.test(ua)) br = 'Firefox'; else if (/Safari\//.test(ua)) br = 'Safari';
+    return os + ' · ' + br;
+  }
+  async function getDev(create) {
+    let d = null; try { d = JSON.parse(ls.get('cs_dev') || 'null'); } catch (e) { d = null; }
+    if (d && d.id && d.priv && d.pub) return d;
+    if (!create) return null;
+    const g = await C.genDevice();
+    d = { id: 'd' + C.b64(C.rnd(6)).replace(/[^A-Za-z0-9]/g, ''), priv: g.priv, pub: g.pub, info: devInfo() };
+    ls.set('cs_dev', JSON.stringify(d));
+    return d;
+  }
+  const textB64 = (o) => C.b64(new TextEncoder().encode(JSON.stringify(o)));
+  async function reqString() {
+    const d = await getDev(true), n = ($('reqName').value || '').trim().slice(0, 40);
+    return 'CSREQ1.' + textB64({ id: d.id, n, pub: d.pub, i: d.info });
+  }
+  function parseReq(txt) {
+    const m = String(txt || '').match(/CSREQ1\.([A-Za-z0-9+\/=\s]+)/); if (!m) return null;
+    const cand = m[1].replace(/\s+/g, '').replace(/=+$/, '');
+    // teks tambahan setelah kode (mis. "terima kasih") ikut terbaca; coba pangkas dari belakang sampai JSON valid
+    for (let L = cand.length; L > Math.max(20, cand.length - 120); L--) {
+      try {
+        const part = cand.slice(0, L), o = JSON.parse(new TextDecoder().decode(C.unb64(part + '='.repeat((4 - part.length % 4) % 4))));
+        if (!o || !/^d[A-Za-z0-9]{4,16}$/.test(o.id || '') || !o.pub || typeof o.pub.x !== 'string' || typeof o.pub.y !== 'string' || o.pub.x.length > 60 || o.pub.y.length > 60) continue;
+        return { id: o.id, n: String(o.n || '').slice(0, 40), i: String(o.i || 'Perangkat').slice(0, 60), pub: { x: o.pub.x, y: o.pub.y } };
+      } catch (e) { /* coba lebih pendek */ }
+    }
+    return null;
+  }
+  async function openReq(name) {
+    if (name) $('reqName').value = name;
+    $('reqInfo').textContent = devInfo(); msg('reqMsg', '');
+    $('reqStr').value = await reqString();
+    if (!ls.get('cs_dev')) msg('reqMsg', 'Browser ini memblokir penyimpanan (mode privat?). Buka di browser biasa agar perangkat bisa disetujui.');
+    $('ovReq').classList.add('show');
+  }
+  const reqMail = async () => {
+    const body = 'Halo Admin,\n\nSaya minta akses ke Cari Jawaban Soal.\nNama: ' + ($('reqName').value || '') + '\nPerangkat: ' + devInfo() + '\n\nKode permintaan (tempel di Panel Admin → Perangkat):\n' + await reqString() + '\n\nTerima kasih.';
+    return 'mailto:' + ADMIN_CONTACT.join(',') + '?subject=' + encodeURIComponent('Minta akses Cari Jawaban Soal') + '&body=' + encodeURIComponent(body);
+  };
+  $('reqName').addEventListener('input', async () => { $('reqStr').value = await reqString(); });
+  $('reqClose').onclick = () => $('ovReq').classList.remove('show');
+  $('reqCopy').onclick = async () => { const v = $('reqStr').value; try { await navigator.clipboard.writeText(v); } catch (e) { $('reqStr').select(); } msg('reqMsg', 'Kode permintaan tersalin. Kirim ke admin.', true); };
+  $('reqMail').onclick = async () => { location.href = await reqMail(); };
+  $('reqCheck').onclick = async () => {
+    msg('reqMsg', 'Memeriksa…', true); await refreshKeys(true);
+    const d = await getDev(false);
+    if (d && (KEYS.devices || []).some((x) => x.id === d.id)) { msg('reqMsg', 'Perangkat ini sudah disetujui ✅ Minta kode 6 angka ke admin lalu login.', true); }
+    else msg('reqMsg', 'Belum disetujui admin. Tunggu admin, lalu klik lagi.');
+  };
+  $('mailAdmin').onclick = (e) => { e.preventDefault(); openReq($('lgUser').value.trim()); };
+  let tFails = 0, tLock = 0;
   async function loginTeam() {
     const raw = $('lgUser').value.trim(), pwRaw = $('lgPw').value, pw = C.normTeam(pwRaw);
-    if (!pwRaw.trim()) return msg('msgTeam', 'Isi kode Authenticator 6 angka dulu.');
     if (raw.includes('@')) return loginAdminWith(raw.toLowerCase(), pwRaw, 'msgTeam');     // email diketik di kolom username → login admin
-    const u = raw.toLowerCase();
+    if (!pwRaw.trim()) return msg('msgTeam', 'Isi kode 6 angka dari Authenticator admin.');
+    if (Date.now() < tLock) return msg('msgTeam', 'Terlalu banyak kode salah. Tunggu ' + Math.ceil((tLock - Date.now()) / 1000) + ' detik.');
     $('btnLogin').disabled = true; msg('msgTeam', 'Memeriksa…', true);
     try {
-      await refreshKeys(true);                                       // pakai data akun terbaru dari GitHub
-      const users = KEYS.users || [], digits = pwRaw.replace(/\D/g, '');
-      // (1) kode 6 angka dari Google Authenticator
-      if (/^\d{6}$/.test(pwRaw.replace(/\s/g, ''))) {
-        let hasLocal = false;
-        for (const x of users.filter((v) => !u || v.id === slug(u) || v.name.toLowerCase() === u)) {
-          const sec = localSec(x.id); if (!sec) continue; hasLocal = true;
-          if (await totpVerify(sec, digits)) {
-            const dek = await C.unwrapDek(x, 'tpu|' + b32enc(sec), KEYS.iter);
-            if (dek) { $('lgPw').value = ''; msg('msgTeam', ''); return await startSession({ role: 'team', name: x.name, uid: x.id, wrap: x.wrap }, dek); }
-            return msg('msgTeam', 'Akun Anda sudah diperbarui admin. Minta kode aktivasi baru.');
-          }
-        }
-        if (hasLocal && !(await legacyTeam(u, pw))) return msg('msgTeam', 'Kode Authenticator salah atau sudah berganti. Coba kode terbaru.');
-        if (!hasLocal && users.length && !(await legacyTeam(u, pw))) return msg('msgTeam', 'Perangkat ini belum diaktifkan. Ketik kode aktivasi 10 karakter dari admin di kolom ini (cukup sekali), atau isi username Anda.');
+      await refreshKeys(true);                                       // data terbaru dari GitHub (perangkat yang diputus langsung ditolak)
+      const code = pwRaw.replace(/\s/g, '');
+      if (/^\d{6}$/.test(code)) {
+        const d = await getDev(false), entry = d && (KEYS.devices || []).find((x) => x.id === d.id);
+        if (!entry) { await openReq(raw); return msg('msgTeam', 'Perangkat ini belum disetujui admin. Kirim kode permintaan ke admin (kotak yang terbuka).'); }
+        const pay = await C.openSealed(entry, d.priv);
+        let dek = null, sec = null; try { const o = JSON.parse(new TextDecoder().decode(pay)); dek = C.unb64(o.d); sec = C.unb64(o.s); } catch (e) { /* rusak */ }
+        if (!dek) return msg('msgTeam', 'Persetujuan perangkat tidak valid. Minta admin menyetujui ulang.');
+        if (await totpVerify(sec, code)) { tFails = 0; $('lgPw').value = ''; msg('msgTeam', ''); return await startSession({ role: 'team', name: entry.user, devId: entry.id }, dek); }
+        if (++tFails >= 5) { tFails = 0; tLock = Date.now() + 30000; }
+        return msg('msgTeam', 'Kode salah atau sudah berganti. Minta kode terbaru ke admin.');
       }
-      // (2) password akun lama
-      if (await legacyTeam(u, pw)) return;
-      // (3) kode aktivasi → hubungkan Authenticator
-      const code = normInvite(pwRaw);
-      if (code.length >= 8) for (const x of users.filter((v) => v.act && v.exp > Date.now())) {
-        const sec = await C.unwrapDek(x.act, 'act|' + code, KEYS.iter);
-        if (sec) { $('lgPw').value = ''; msg('msgTeam', ''); return askActivate(x, sec); }
-      }
-      const looksCode = /^[A-Za-z0-9]{5}-?[A-Za-z0-9]{5}$/.test(pwRaw.trim());
-      msg('msgTeam', looksCode ? 'Kode aktivasi tidak cocok, sudah kedaluwarsa, atau belum diaktifkan admin. Minta admin membuat kode baru.' : 'Kode salah. Buka Google Authenticator dan ketik kode 6 angka terbaru.');
+      if (await legacyTeam(raw.toLowerCase(), pw)) return;           // password akun tim lama (bila admin masih menyimpannya)
+      msg('msgTeam', 'Kode harus 6 angka dari Authenticator admin. Belum punya akses? Klik “Hubungi admin”.');
     } finally { $('btnLogin').disabled = false; }
   }
   async function legacyTeam(u, pw) {
@@ -587,33 +631,6 @@
     }
     return false;
   }
-  /* Aktivasi perangkat: tampilkan QR → pengguna memindai → ketik kode 6 angka → rahasia disimpan di perangkat ini. */
-  let ACT = null;
-  function askActivate(user, sec) {
-    ACT = { user, sec, fails: 0 }; const key = b32enc(sec);
-    const uri = 'otpauth://totp/' + encodeURIComponent('Cari Jawaban Soal:' + user.name) + '?secret=' + key + '&issuer=' + encodeURIComponent('Cari Jawaban Soal') + '&algorithm=SHA1&digits=6&period=30';
-    let img = ''; try { const q = window.qrcode(0, 'M'); q.addData(uri); q.make(); img = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); } catch (e) { img = ''; }
-    $('actQr').innerHTML = img || '<div class="note" style="color:#111">QR gagal dibuat — ketik kunci manual di bawah.</div>';
-    $('actKey').textContent = key.match(/.{1,4}/g).join(' '); $('actCode').value = ''; msg('actMsg', ''); $('actName').textContent = user.name;
-    $('ovAct').classList.add('show'); setTimeout(() => $('actCode').focus(), 60);
-  }
-  async function submitAct() {
-    if (!ACT) return;
-    if ($('actCode').value.replace(/\D/g, '').length !== 6) return msg('actMsg', 'Masukkan 6 angka dari aplikasi Authenticator.');
-    $('actGo').disabled = true;
-    try {
-      if (await totpVerify(ACT.sec, $('actCode').value)) {
-        const A = ACT, dek = await C.unwrapDek(A.user, 'tpu|' + b32enc(A.sec), KEYS.iter);
-        if (!dek) return msg('actMsg', 'Data akun tidak cocok. Minta admin membuat kode baru.');
-        ACT = null; ls.set('cs_tp_' + A.user.id, b32enc(A.sec)); $('ovAct').classList.remove('show'); $('actCode').value = '';
-        return await startSession({ role: 'team', name: A.user.name, uid: A.user.id, wrap: A.user.wrap }, dek);
-      }
-      if (++ACT.fails >= 5) { ACT = null; $('ovAct').classList.remove('show'); return msg('msgTeam', 'Terlalu banyak kode salah. Ulangi dari awal.'); }
-      msg('actMsg', 'Kode salah atau sudah berganti. Pastikan jam HP otomatis, lalu coba kode terbaru.');
-    } finally { $('actGo').disabled = false; }
-  }
-  $('actGo').onclick = submitAct; $('actCancel').onclick = () => { ACT = null; $('ovAct').classList.remove('show'); };
-  $('actCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAct(); });
   async function loginAdminWith(em, pw, msgId) {
     if (!em || !pw) return msg(msgId, 'Isi email dan password admin.');
     const btn = msgId === 'msgAdmin' ? $('btnAdmin') : $('btnLogin'); btn.disabled = true; msg(msgId, 'Memeriksa…', true);
@@ -635,7 +652,6 @@
   }
   const loginAdmin = () => loginAdminWith($('adEmail').value.trim().toLowerCase(), $('adPw').value, 'msgAdmin');
   $('btnLogin').onclick = loginTeam; $('btnAdmin').onclick = loginAdmin;
-  $('mailAdmin').href = 'mailto:' + ADMIN_CONTACT.join(',') + '?subject=' + encodeURIComponent('Minta akses Cari Jawaban Soal') + '&body=' + encodeURIComponent('Halo Admin,\n\nSaya ingin minta akses ke Cari Jawaban Soal.\nNama: \nToko/Area: \n\nTerima kasih.');
   $('lgPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') loginTeam(); });
   $('lgUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('lgPw').focus(); });
   $('adPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') loginAdmin(); });
@@ -688,7 +704,7 @@
   $('totpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitTotp(); });
 
   /* ====================== PANEL ADMIN ====================== */
-  const keysText = () => { KEYS.updated = new Date().toISOString(); delete KEYS.invites; KEYS.users = KEYS.users || []; return 'window.CS_KEYS=' + JSON.stringify(KEYS) + ';\n'; };
+  const keysText = () => { KEYS.updated = new Date().toISOString(); delete KEYS.invites; delete KEYS.users; KEYS.devices = KEYS.devices || []; return 'window.CS_KEYS=' + JSON.stringify(KEYS) + ';\n'; };
   const adMsg = (html, cls) => { $('pubMsg').innerHTML = html ? '<div class="alert ' + (cls || 'ok') + '">' + html + '</div>' : ''; };
 
   function renderAcc() {
@@ -706,7 +722,6 @@
     const s = e.target.closest('[data-set]'), d = e.target.closest('[data-del]');
     if (s) { const inp = $('accTbl').querySelector('[data-pw="' + s.dataset.set + '"]'); await setAccPassword(s.dataset.set, inp.value); inp.value = ''; showTab('pub-hint'); }
     if (d) {
-      if (KEYS.accounts.length <= 1) return adMsg('Minimal harus ada 1 akun tim.', 'err');
       if (!confirm('Hapus akun ' + d.dataset.del + '?')) return;
       KEYS.accounts = KEYS.accounts.filter((a) => a.id !== d.dataset.del); renderAcc();
       await commitKeys('Akun <b>' + esc(d.dataset.del) + '</b> dihapus — langsung nonaktif. Catatan: yang pernah menyimpan file kunci lama masih bisa membuka data lama; pakai “Rotasi penuh” untuk mencabut total.');
@@ -731,29 +746,38 @@
   const fmtCode = (c) => c.slice(0, 5) + '-' + c.slice(5);
   const newInviteCode = () => { const r = C.rnd(10); let s = ''; for (const x of r) s += INV_ALPHA[x % INV_ALPHA.length]; return s; };
   const fmtDate = (t) => new Date(t).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
+  const maskEmail = (e) => String(e).replace(/^(.{2}).*(@.*)$/, '$1***$2');
   function renderInv() {
-    KEYS.users = (KEYS.users || []);
-    $('invTbl').innerHTML = KEYS.users.length ? '<tr><th>Pengguna</th><th>Kode aktivasi</th><th></th></tr>' + KEYS.users.map((v) =>
-      '<tr><td><b>' + esc(v.name) + '</b></td><td>' + (v.exp > Date.now() ? 'aktif s/d ' + fmtDate(v.exp) : 'kedaluwarsa (perangkat yang sudah aktif tetap bisa masuk)') + '</td><td><button class="btn btn-sm btn-danger" data-invdel="' + esc(v.id) + '">Hapus</button></td></tr>').join('') : '<tr><td class="note">Belum ada pengguna Authenticator.</td></tr>';
+    KEYS.devices = (KEYS.devices || []);
+    $('invTbl').innerHTML = KEYS.devices.length ? '<tr><th>Pengguna</th><th>Perangkat</th><th>Kode dari</th><th>Sejak</th><th></th></tr>' + KEYS.devices.map((v) =>
+      '<tr><td><b>' + esc(v.user) + '</b></td><td>' + esc(v.info) + '</td><td>' + esc(v.by || '—') + '</td><td>' + fmtDate(v.at) + '</td><td><button class="btn btn-sm btn-danger" data-invdel="' + esc(v.id) + '">Putuskan</button></td></tr>').join('') : '<tr><td class="note">Belum ada perangkat tim yang terhubung.</td></tr>';
+    show($('devAll'), KEYS.devices.length > 0);
   }
+  const adminSecret2 = async () => { const me = KEYS.admins.find((x) => x.h === SESS.h); return me && me.tp ? await C.unwrapDek(me.tp, 'tp|' + C.b64(DEK), KEYS.iter) : null; };
+  const sealPayload = (sec) => new TextEncoder().encode(JSON.stringify({ d: C.b64(DEK), s: C.b64(sec) }));
   $('invMake').onclick = async () => {
-    const name = $('invName').value.trim(); if (!name) return adMsg('Isi nama pengguna dulu.', 'err');
-    const id = slug(name); if (!id) return adMsg('Nama tidak valid.', 'err');
-    KEYS.users = KEYS.users || [];
-    if (KEYS.users.length >= 40 && !KEYS.users.some((v) => v.id === id)) return adMsg('Maksimal 40 pengguna. Hapus yang tidak dipakai dulu.', 'err');
-    const code = newInviteCode(), ttl = +$('invTtl').value, exp = Date.now() + ttl * 3600 * 1000, sec = C.rnd(20);
-    // rahasia Authenticator (sec) dibungkus kode aktivasi; kunci data (DEK) dibungkus rahasia itu. Perangkat baru butuh kode aktivasi baru.
-    const rec = { id, name: name.toUpperCase(), exp, act: await C.wrapDek(sec, 'act|' + code, KEYS.iter), ...(await C.wrapDek(DEK, 'tpu|' + b32enc(sec), KEYS.iter)) };
-    const i = KEYS.users.findIndex((v) => v.id === id); if (i >= 0) KEYS.users[i] = rec; else KEYS.users.push(rec);
-    renderInv();
-    const ok = await commitKeys('Pengguna Authenticator <b>' + esc(rec.name) + '</b> dibuat.');
-    const stat = ok ? '✅ <b>Langsung aktif</b>, tidak perlu deploy ulang.' : '⚠️ <b>Belum aktif</b> — isi token GitHub (tab Terbitkan ke GitHub) agar langsung aktif.';
-    const em = $('invEmail').value.trim();
-    const body = 'Halo ' + name + ',\n\nKode aktivasi Cari Jawaban Soal: ' + fmtCode(code) + '\nBerlaku sampai ' + fmtDate(exp) + '.\n\nCara: 1) Buka halaman login, ketik kode aktivasi di kolom Kode. 2) Pindai QR dengan Google Authenticator. 3) Ketik kode 6 angka yang muncul. Setelahnya cukup ketik kode 6 angka dari Authenticator untuk login.\n\nSesi aktif maksimal 2 jam.';
-    $('invNew').innerHTML = '<div class="alert ok">Kode aktivasi untuk <b>' + esc(rec.name) + '</b>: <span style="font-size:22px;font-weight:800;letter-spacing:2px;user-select:all">' + fmtCode(code) + '</span><br>Berlaku sampai ' + fmtDate(exp) + ' (dipakai sekali per perangkat). Kode ini hanya ditampilkan sekarang. ' + stat + '<div class="actions"><button class="btn btn-sm" data-copy="' + fmtCode(code) + '">Salin kode</button> <a class="btn btn-sm" style="text-decoration:none;display:inline-block" href="mailto:' + encodeURIComponent(em) + '?subject=' + encodeURIComponent('Kode aktivasi Cari Jawaban Soal') + '&body=' + encodeURIComponent(body) + '">✉️ Kirim lewat email</a></div></div>';
-    $('invName').value = '';
+    const req = parseReq($('reqPaste').value); if (!req) return adMsg('Kode permintaan tidak valid. Minta pengguna menyalin ulang dari halaman login (diawali CSREQ1.).', 'err');
+    const sec = await adminSecret2(); if (!sec) return adMsg('Hubungkan <b>Authenticator admin</b> dulu (tab Authenticator). Pengguna memakai kode dari Authenticator Anda.', 'err');
+    const user = ($('invName').value.trim() || req.n || '').toUpperCase().slice(0, 40); if (!user) return adMsg('Isi nama pengguna.', 'err');
+    KEYS.devices = KEYS.devices || [];
+    if (KEYS.devices.length >= 60 && !KEYS.devices.some((v) => v.id === req.id)) return adMsg('Maksimal 60 perangkat. Putuskan yang tidak dipakai dulu.', 'err');
+    const rec = { id: req.id, user, info: req.i, adm: SESS.h, by: maskEmail(SESS.email), at: Date.now(), pub: req.pub, ...(await C.sealFor(req.pub, sealPayload(sec))) };
+    const i = KEYS.devices.findIndex((v) => v.id === req.id); if (i >= 0) KEYS.devices[i] = rec; else KEYS.devices.push(rec);
+    $('reqPaste').value = ''; $('invName').value = ''; renderInv();
+    const ok = await commitKeys('Perangkat <b>' + esc(user) + '</b> (' + esc(req.i) + ') disetujui.');
+    $('invNew').innerHTML = '<div class="alert ' + (ok ? 'ok' : 'warn') + '">' + (ok ? '✅' : '⚠️ <b>Belum aktif</b> — isi token GitHub dulu.') + ' Beri tahu <b>' + esc(user) + '</b>: buka halaman login, ketik <b>kode 6 angka dari Authenticator Anda</b> (admin akan membacakan kode saat itu).</div>';
   };
-  $('invTbl').addEventListener('click', async (e) => { const d = e.target.closest('[data-invdel]'); if (!d) return; KEYS.users = KEYS.users.filter((v) => v.id !== d.dataset.invdel); renderInv(); await commitKeys('Pengguna dihapus — langsung nonaktif di semua perangkat.'); });
+  $('invTbl').addEventListener('click', async (e) => { const d = e.target.closest('[data-invdel]'); if (!d) return; KEYS.devices = KEYS.devices.filter((v) => v.id !== d.dataset.invdel); renderInv(); $('invNew').innerHTML = ''; await commitKeys('Perangkat diputus — pengguna langsung keluar (±1 menit) dan harus minta persetujuan lagi.'); });
+  $('devAll').onclick = async () => { if (!confirm('Putuskan SEMUA perangkat tim?')) return; KEYS.devices = []; renderInv(); await commitKeys('Semua perangkat tim diputus.'); };
+  /** Rahasia Authenticator admin berubah/dimatikan → segel ulang (atau putuskan) perangkat yang disetujui admin itu. */
+  async function refreshDevicesOf(h, sec) {
+    const out = [];
+    for (const v of (KEYS.devices || [])) {
+      if (v.adm !== h) { out.push(v); continue; }
+      if (sec) out.push({ ...v, ...(await C.sealFor(v.pub, sealPayload(sec))) });
+    }
+    KEYS.devices = out;
+  }
   $('admAdd').onclick = async () => {
     const em = $('admNewEmail').value.trim().toLowerCase(), pw = $('admNewPw').value;
     if (!/^\S+@\S+\.\S+$/.test(em)) return adMsg('Email admin tidak valid.', 'err');
@@ -782,16 +806,17 @@
     if (!(await totpVerify(TSETUP, $('totpCodeIn').value))) return adMsg('Kode belum cocok. Pastikan jam HP otomatis, lalu coba kode terbaru.', 'err');
     const i = KEYS.admins.findIndex((x) => x.h === SESS.h); if (i < 0) return;
     KEYS.admins[i] = { ...KEYS.admins[i], tp: await C.wrapDek(TSETUP, 'tp|' + C.b64(DEK), KEYS.iter) };
-    TSETUP = null; renderTotp();
+    await refreshDevicesOf(SESS.h, TSETUP); TSETUP = null; renderTotp(); renderInv();
     await commitKeys('Authenticator terhubung untuk <b>' + esc(SESS.email) + '</b>. Login admin berikutnya meminta kode 6 angka.');
   };
   $('totpOffBtn').onclick = async () => {
-    const i = KEYS.admins.findIndex((x) => x.h === SESS.h); if (i < 0) return; delete KEYS.admins[i].tp; renderTotp();
+    const i = KEYS.admins.findIndex((x) => x.h === SESS.h); if (i < 0) return; delete KEYS.admins[i].tp; await refreshDevicesOf(SESS.h, null); renderTotp(); renderInv();
     await commitKeys('Authenticator dimatikan untuk <b>' + esc(SESS.email) + '</b>.');
   };
   $('totpResetOthers').onclick = async () => {
     if (!confirm('Matikan Authenticator semua admin lain? Mereka bisa hubungkan ulang setelah login.')) return;
-    KEYS.admins.forEach((x) => { if (x.h !== SESS.h) delete x.tp; });
+    for (const x of KEYS.admins) if (x.h !== SESS.h) { delete x.tp; await refreshDevicesOf(x.h, null); }
+    renderInv();
     await commitKeys('Authenticator admin lain direset.');
   };
   function showTab(t) {
@@ -911,7 +936,7 @@
     try {
       const cfg = ghCfg(), nd = C.rnd(32), emails = $('rotEmails').value.split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter((x) => /^\S+@\S+\.\S+$/.test(x));
       if (!emails.includes(SESS.email)) throw new Error('Email admin yang sedang masuk harus ada di daftar.');
-      const nk = { v: 1, iter: KEYS.iter, updated: '', accounts: [], admins: [], users: [] };
+      const nk = { v: 1, iter: KEYS.iter, updated: '', accounts: [], admins: [], devices: [] };
       for (const a of KEYS.accounts) nk.accounts.push({ id: a.id, name: a.name, ...(await C.wrapDek(nd, C.normTeam(pws[a.id]), KEYS.iter)) });
       for (const em of [...new Set(emails)]) nk.admins.push({ h: await C.sha256hex(em), ...(await C.wrapDek(nd, C.adminSecret(em, adm), KEYS.iter)) });
       const btext = await bankText(nd);
@@ -931,7 +956,7 @@
     refreshKeys(true);
     try {
       const s = JSON.parse(ss.get('cs_session') || 'null');
-      if (s && s.exp > Date.now() && s.dek) { SESS = { role: s.role, name: s.name, email: s.email, h: s.h, accId: s.accId, wrap: s.wrap, uid: s.uid, exp: s.exp }; DEK = C.unb64(s.dek); await enter(); }
+      if (s && s.exp > Date.now() && s.dek) { SESS = { role: s.role, name: s.name, email: s.email, h: s.h, accId: s.accId, wrap: s.wrap, devId: s.devId, exp: s.exp }; DEK = C.unb64(s.dek); await enter(); }
     } catch (e) { /* sesi tidak valid → tetap di layar login */ }
   })();
 
