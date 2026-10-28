@@ -486,13 +486,22 @@
     } catch (e) { return null; } finally { if (to) clearTimeout(to); }
   }
   async function refreshKeys(force) {
-    if (!force && Date.now() - liveAt < 15000) return false;
+    if (!force && Date.now() - liveAt < 15000) return !!LIVE;
     liveAt = Date.now();
-    const k = await fetchLiveKeys(); if (!k) return false;
+    const k = await fetchLiveKeys();
+    if (!k) { LIVE = null; return false; }
     LIVE = k;
-    if (adminDirty) return false;                                   // jangan menimpa perubahan admin yang belum terbit
-    if (String(k.updated || '') >= String((KEYS && KEYS.updated) || '')) { KEYS = JSON.parse(JSON.stringify(k)); return true; }
-    return false;
+    if (adminDirty) return false; // jangan menimpa perubahan admin yang belum diterbitkan
+    // GitHub raw adalah sumber kebenaran untuk persetujuan perangkat. Jangan membandingkan
+    // timestamp file yang tertanam di Pages: file itu bisa lebih baru tetapi belum memuat
+    // persetujuan terbaru, sehingga perangkat yang sudah disetujui terlihat belum disetujui.
+    KEYS = JSON.parse(JSON.stringify(k));
+    return true;
+  }
+  function liveKeysError() {
+    const g = ghDefaults();
+    if (!g.owner || !g.repo) return 'Tidak bisa memeriksa persetujuan perangkat: alamat GitHub Pages tidak dikenali. Buka situs dari URL https://USERNAME.github.io/NAMA-REPO/.';
+    return 'Tidak bisa membaca data persetujuan terbaru dari GitHub. Periksa koneksi internet, nama repo/branch (default main), dan pastikan file data/keys.js ada di repo. Coba lagi beberapa saat.';
   }
   function sessionValid(k) {
     if (!SESS || !k) return true;
@@ -594,10 +603,12 @@
   $('reqCopy').onclick = async () => { const v = $('reqStr').value; try { await navigator.clipboard.writeText(v); } catch (e) { $('reqStr').select(); } msg('reqMsg', 'Kode permintaan tersalin. Kirim ke admin.', true); };
   $('reqMail').onclick = async () => { location.href = await reqMail(); };
   $('reqCheck').onclick = async () => {
-    msg('reqMsg', 'Memeriksa…', true); await refreshKeys(true);
+    msg('reqMsg', 'Memeriksa…', true);
+    await refreshKeys(true);
+    if (!LIVE) return msg('reqMsg', liveKeysError());
     const d = await getDev(false);
     if (d && (KEYS.devices || []).some((x) => x.id === d.id)) { msg('reqMsg', 'Perangkat ini sudah disetujui ✅ Minta kode 6 angka ke admin lalu login.', true); }
-    else msg('reqMsg', 'Belum disetujui admin. Tunggu admin, lalu klik lagi.');
+    else msg('reqMsg', 'ID perangkat di browser ini belum ada di daftar persetujuan. Jika admin sudah menyetujui, gunakan browser yang sama seperti saat membuat permintaan atau kirim ulang kode CSREQ1 dari HP ini agar admin menyetujui ID perangkat yang benar.');
   };
   $('mailAdmin').onclick = (e) => { e.preventDefault(); openReq($('lgUser').value.trim()); };
   let tFails = 0, tLock = 0;
@@ -609,6 +620,7 @@
     $('btnLogin').disabled = true; msg('msgTeam', 'Memeriksa…', true);
     try {
       await refreshKeys(true);                                       // data terbaru dari GitHub (perangkat yang diputus langsung ditolak)
+      if (!LIVE) return msg('msgTeam', liveKeysError());
       const code = pwRaw.replace(/\s/g, '');
       if (/^\d{6}$/.test(code)) {
         const d = await getDev(false), entry = d && (KEYS.devices || []).find((x) => x.id === d.id);
