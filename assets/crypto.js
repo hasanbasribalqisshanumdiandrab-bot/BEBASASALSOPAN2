@@ -64,6 +64,30 @@
     return JSON.parse(dec.decode(await gunzip(plain)));
   }
 
-  const api = { ITER, b64, unb64, sha256hex, normTeam, adminSecret, wrapDek, unwrapDek, encryptBank, decryptBank, rnd };
+  /* Perangkat tim: pasangan kunci ECDH P-256 dibuat di perangkat. Admin "menyegel" (kunci data + rahasia Authenticator admin)
+     untuk kunci PUBLIK perangkat; hanya perangkat itu (kunci privatnya) yang bisa membukanya. Permintaan tidak berisi rahasia apa pun. */
+  const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+  async function genDevice() {
+    const kp = await subtle.generateKey(ECDH, true, ['deriveKey']);
+    const priv = await subtle.exportKey('jwk', kp.privateKey), pub = await subtle.exportKey('jwk', kp.publicKey);
+    return { priv, pub: { x: pub.x, y: pub.y } };
+  }
+  const impPub = (p) => subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: String(p.x), y: String(p.y), ext: true }, ECDH, false, []);
+  async function sealFor(devPub, payloadU8) {
+    const eph = await subtle.generateKey(ECDH, true, ['deriveKey']);
+    const key = await subtle.deriveKey({ name: 'ECDH', public: await impPub(devPub) }, eph.privateKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+    const iv = rnd(12), ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, key, payloadU8));
+    const ep = await subtle.exportKey('jwk', eph.publicKey);
+    return { eph: { x: ep.x, y: ep.y }, iv: b64(iv), ct: b64(ct) };
+  }
+  async function openSealed(entry, privJwk) {
+    try {
+      const priv = await subtle.importKey('jwk', privJwk, ECDH, false, ['deriveKey']);
+      const key = await subtle.deriveKey({ name: 'ECDH', public: await impPub(entry.eph) }, priv, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      return new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv: unb64(entry.iv) }, key, unb64(entry.ct)));
+    } catch (e) { return null; }
+  }
+
+  const api = { genDevice, sealFor, openSealed, ITER, b64, unb64, sha256hex, normTeam, adminSecret, wrapDek, unwrapDek, encryptBank, decryptBank, rnd };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CSCrypto = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
