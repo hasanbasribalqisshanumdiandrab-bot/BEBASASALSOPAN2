@@ -20,17 +20,17 @@
         <h2>Login</h2>
         <div class="field">
           <input id="lgUser" placeholder=" " autocomplete="username" spellcheck="false">
-          <label for="lgUser">Username (boleh dikosongkan)</label>
+          <label for="lgUser">Nama Anda (boleh dikosongkan)</label>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
         </div>
         <div class="field">
           <input id="lgPw" type="password" placeholder=" " autocomplete="one-time-code" autocapitalize="characters" spellcheck="false">
-          <label for="lgPw">Kode Authenticator (6 angka)</label>
+          <label for="lgPw">Kode dari Authenticator admin (6 angka)</label>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
         </div>
         <button class="go" id="btnLogin">Login</button>
         <div class="msg" id="msgTeam"></div>
-        <div class="sw">Belum punya akses / HP baru? <a id="mailAdmin" class="linkbtn" href="#" style="text-decoration:underline">Hubungi admin lewat email</a></div>
+        <div class="sw">Belum punya akses / HP baru? <a id="mailAdmin" class="linkbtn" href="#" style="text-decoration:underline">Hubungi admin lewat email</a><br><small style="opacity:.75">Setiap login, minta kode 6 angka terbaru ke admin.</small></div>
         <div class="sw">Pengelola web?<button class="linkbtn" id="toAdmin" type="button">Masuk sebagai Admin</button></div>
       </div>
 
@@ -171,16 +171,17 @@
 </div></div>
 
 <!-- ======================= KODE AUTHENTICATOR SAAT LOGIN ======================= -->
-<!-- ======================= AKTIVASI AUTHENTICATOR PENGGUNA ======================= -->
-<div class="ov" id="ovAct"><div class="modal sm">
-  <div class="mh"><h3>📲 Hubungkan Authenticator</h3><button class="btn btn-sm" id="actCancel">Batal</button></div>
+<!-- ======================= PERMINTAAN PERSETUJUAN PERANGKAT ======================= -->
+<div class="ov" id="ovReq"><div class="modal sm">
+  <div class="mh"><h3>📲 Minta akses ke admin</h3><button class="btn btn-sm" id="reqClose">Tutup</button></div>
   <div class="mb">
-    <div class="note">Halo <b id="actName"></b>. 1) Buka <b>Google Authenticator</b> → <b>+</b> → <b>Pindai kode QR</b>. 2) Pindai QR ini. 3) Ketik kode 6 angka yang muncul. Setelah itu, login cukup memakai kode 6 angka.</div>
-    <div id="actQr" style="width:220px;max-width:100%;background:#fff;padding:8px;border-radius:12px;margin:10px 0"></div>
-    <div class="note">Tidak bisa memindai? Kunci manual (berbasis waktu): <b id="actKey" style="letter-spacing:1px;user-select:all"></b></div>
-    <input class="inp" id="actCode" inputmode="numeric" maxlength="7" autocomplete="one-time-code" placeholder="123456">
-    <div class="msg" id="actMsg"></div>
-    <div class="actions"><button class="btn btn-acc" id="actGo">Aktifkan & Masuk</button></div>
+    <div class="note">Perangkat ini (<b id="reqInfo"></b>) perlu disetujui admin <b>sekali</b>. Kirim kode permintaan di bawah ke admin (email atau chat). Kode ini aman: tidak berisi password atau kunci rahasia. Setelah disetujui, setiap login cukup ketik <b>kode 6 angka dari Authenticator admin</b> (minta admin membacakannya).</div>
+    <label class="lab" for="reqName">Nama Anda</label>
+    <input class="inp" id="reqName" placeholder="mis. ARI" maxlength="40" autocomplete="off">
+    <label class="lab" for="reqStr">Kode permintaan</label>
+    <textarea class="inp" id="reqStr" readonly rows="4" style="font-size:12px;word-break:break-all"></textarea>
+    <div class="msg" id="reqMsg"></div>
+    <div class="actions"><button class="btn btn-acc" id="reqMail">✉️ Kirim ke admin lewat email</button><button class="btn" id="reqCopy">Salin</button><button class="btn" id="reqCheck">Sudah disetujui? Cek</button></div>
   </div>
 </div></div>
 
@@ -201,7 +202,7 @@
     <div id="pubMsg"></div>
     <div class="tabs">
       <button class="tab on" data-tab="acc">Akun tim</button>
-      <button class="tab" data-tab="inv">Pengguna Authenticator</button>
+      <button class="tab" data-tab="inv">Perangkat</button>
       <button class="tab" data-tab="tot">Authenticator</button>
       <button class="tab" data-tab="me">Password admin</button>
       <button class="tab" data-tab="pub">Terbitkan ke GitHub</button>
@@ -219,13 +220,11 @@
     </div>
 
         <div id="tab-inv" class="hidden">
-      <div class="note">Buat pengguna baru. Admin mendapat <b>kode aktivasi</b> (10 karakter). Pengguna mengetiknya di kolom login, memindai QR dengan <b>Google Authenticator</b>, lalu seterusnya cukup <b>kode 6 angka</b>. Kode aktivasi berlaku sesuai batas waktu & sekali pakai per perangkat. Perlu token GitHub agar langsung aktif. HP baru / ganti HP: buat ulang pengguna dengan nama yang sama.</div>
-      <div class="grid2">
-        <div><label class="lab" for="invName">Nama pengguna</label><input class="inp" id="invName" placeholder="mis. TEJA"></div>
-        <div><label class="lab" for="invTtl">Kode aktivasi berlaku</label><select class="inp" id="invTtl"><option value="1">1 jam</option><option value="24" selected>24 jam</option><option value="72">3 hari</option><option value="168">7 hari</option></select></div>
-        <div><label class="lab" for="invEmail">Email pengguna (opsional, untuk kirim kode)</label><input class="inp" id="invEmail" type="email" placeholder="nama@gmail.com"></div>
-      </div>
-      <div class="actions"><button class="btn btn-acc" id="invMake">Buat pengguna &amp; kode aktivasi</button></div>
+      <div class="note">Daftar <b>HP/PC tim yang terhubung</b>. Pengguna meminta akses dari halaman login (mendapat <i>kode permintaan</i>) → tempel di sini → <b>Setujui</b>. Setiap login mereka memasukkan <b>kode 6 angka dari Authenticator Anda</b>. Sesi maksimal 2 jam. Klik <b>Putuskan</b> kapan saja untuk memutus perangkat. Perlu token GitHub agar langsung berlaku.</div>
+      <label class="lab" for="reqPaste">Tempel kode permintaan (CSREQ1.…)</label>
+      <textarea class="inp" id="reqPaste" rows="3" placeholder="CSREQ1.…" style="font-size:12px"></textarea>
+      <div class="grid2"><div><label class="lab" for="invName">Nama pengguna (opsional, ganti nama dari permintaan)</label><input class="inp" id="invName" placeholder="mis. ARI"></div></div>
+      <div class="actions"><button class="btn btn-acc" id="invMake">Setujui perangkat</button><button class="btn btn-danger hidden" id="devAll">Putuskan semua</button></div>
       <div id="invNew"></div>
       <table class="tbl" id="invTbl"></table>
     </div>
